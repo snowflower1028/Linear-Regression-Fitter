@@ -19,7 +19,7 @@ st.markdown(
     """
     This app analyzes time series data to find linear regions and visualize the results.
     
-    `version 0.1.1 (2025-04-14, Seoul National University, College of Pharmacy WLab(Prof. Wooin Lee) Minsoo Lee)`
+    `version 1.0.0 (2025-04-14, Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee))`
 
     - Upload an Excel file with time series data.    
     """

@@ -180,7 +180,7 @@ def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="pl
     :param label: Label for the plot title.
     :param out_dir: Output directory for saving the plot.
     :param cutoff_idx: Index of the cutoff point for saturation detection.
-    :param num_best: 몇 개까지 그릴지
+    :param num_best: Number of best-fit segments to show (up to 5).
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -189,8 +189,8 @@ def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="pl
     x_min, x_max = np.nanmin(x_all), np.nanmax(x_all)
     x_line = np.linspace(x_min, x_max, 200)
 
-    colors = ['red', 'blue', 'green']
-    labels = ['Best 1', 'Best 2', 'Best 3']
+    colors = ['skyblue', 'cornflowerblue', 'mediumseagreen', 'orange', 'orchid']
+    labels = ['Best 1', 'Best 2', 'Best 3', 'Best 4', 'Best 5']
 
     plt.figure(figsize=(10, 6))
     plt.scatter(x_all, y_all, c='lightgray', s=10, label="All Data", zorder=0)
@@ -199,6 +199,7 @@ def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="pl
         range_txt, r2, slope_expr, res = best_results[i]
         if res is None:
             continue
+
         i_start = res["start_idx"]
         i_end = res["end_idx"]
         x_fit = time_seconds.iloc[i_start:i_end + 1].to_numpy()
@@ -207,12 +208,31 @@ def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="pl
         intercept = res["intercept"]
         y_line = (slope / 60) * x_line + intercept
 
-        plt.scatter(x_fit, y_fit, color=colors[i], s=40, edgecolors='black', label=f"{labels[i]} Region ({range_txt})", zorder=2 + i)
-        plt.plot(x_line, y_line, color=colors[i], linewidth=2, label=f"{labels[i]} Fit: {slope_expr}, R²={r2}", zorder=3 + i)
+        plt.scatter(
+            x_fit, y_fit,
+            color=colors[i % len(colors)],
+            s=40,
+            edgecolors='black',
+            label=f"{labels[i % len(labels)]} Region ({range_txt})",
+            zorder=2 + i
+        )
+        plt.plot(
+            x_line, y_line,
+            color=colors[i % len(colors)],
+            linewidth=2,
+            label=f"{labels[i % len(labels)]} Fit: {slope_expr}, R²={r2}",
+            zorder=3 + i
+        )
 
     if cutoff_idx is not None and 0 <= cutoff_idx < len(time_seconds):
         cutoff_time = time_seconds.iloc[cutoff_idx]
-        plt.axvline(x=cutoff_time, color='purple', linestyle='--', linewidth=2, label=f"Saturation Cutoff @ {str(timedelta(seconds=int(cutoff_time)))}")
+        plt.axvline(
+            x=cutoff_time,
+            color='purple',
+            linestyle='--',
+            linewidth=2,
+            label=f"Saturation Cutoff @ {str(timedelta(seconds=int(cutoff_time)))}"
+        )
 
     plt.xlabel("Time (sec)")
     plt.ylabel("Value")
@@ -222,3 +242,4 @@ def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="pl
     plt.tight_layout()
     plt.savefig(os.path.join(out_dir, f"{label}_best{num_best}_fits.png"))
     plt.close()
+
