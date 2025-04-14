@@ -4,7 +4,7 @@ This program performs **linear regression** between time and multiple data colum
 
 이 프로그램은 시간과 관측값 간의 선형 회귀를 다양한 구간에서 수행하여, 가장 피팅이 잘 되는 구간을 자동으로 탐색합니다.
 
-➡️ [Streamlit Cloud에서 사용 가능](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/))
+➡️ [Streamlit Cloud에서 사용 가능](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/)
 
 ---
 
@@ -59,12 +59,23 @@ Once analysis is complete, download options will be shown:
   - Highlighted subset used for fitting  
   - (if enabled) Saturation cutoff point
 
+- 🖼 **Interactive Visualization**
+  From **v1.1.0**, you can now preview best fitting results using **interactive Plotly charts** directly in the app.
+  - Visualize top 1 to 5 regression results per column.
+  - Hover to inspect data points and regression lines.
+  - Saturation cutoff lines will also be marked if applicable.
+
+To use:
+1. Complete the analysis with your desired settings.
+2. Scroll to "🖼 Interactive Plot Viewer".
+3. Use the slider to select a data column and interactively explore its best fits.
+
 ---
 
 ## 💻 Deployments
 
 This app is available as:
-- ✅ A web app via [Streamlit Cloud](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/))
+- ✅ A web app via [Streamlit Cloud](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/)
 - ✅ A Windows desktop app (generated via [Nativefier](https://drive.google.com/file/d/1Dfah4LvvVWkrbT37a9C-1f3nhCMH-me8/view?usp=sharing))
 
 ---
@@ -75,7 +86,7 @@ This app is available as:
 - [Scikit-learn](https://scikit-learn.org/)
 - [Pandas](https://pandas.pydata.org/)
 - [Matplotlib](https://matplotlib.org/)
-- [PyInstaller](https://www.pyinstaller.org/) (optional: for local `.exe`)
+- [Plotly](https://plotly.com/)
 - [Nativefier](https://github.com/nativefier/nativefier) (for Windows desktop app)
 
 ---
@@ -83,7 +94,7 @@ This app is available as:
 ## 👤 Author
 
 **Minsoo Lee, PharmD, RPh**  
-Seoul National University College of Pharmacy  
+Seoul National University, College of Pharmacy  
 WLab (Prof. Wooin Lee)
 
 ---
