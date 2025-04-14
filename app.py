@@ -20,7 +20,7 @@ st.markdown(
     This app analyzes time series data to find linear regions and visualize the results.
     
     `version 0.1.1 (2025-04-14, Seoul National University, College of Pharmacy WLab(Prof. Wooin Lee) Minsoo Lee)`
-    
+
     - Upload an Excel file with time series data.    
     """
 )
@@ -72,7 +72,7 @@ if uploaded_file:
                 min_points = max(2, int(total_points * (min_segment_ratio / 100)))
 
                 if analysis_mode == "General Sliding Window":
-                    top_results = analyze_column(time_seconds, y_values, top_n=num_best)
+                    top_results = analyze_column(time_seconds, y_values, min_points, top_n=num_best)
                     cutoff_idx = None
                 elif analysis_mode == "Detect Saturation":
                     top_results, cutoff_idx = analyze_column_with_saturation_cutoff(

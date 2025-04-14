@@ -77,7 +77,7 @@ def detect_linear_region(x, y, window=5, slope_threshold=0.05) -> int:
     return len(x)
 
 
-def analyze_column(time_seconds, y_values, top_n=3) -> List[dict]:
+def analyze_column(time_seconds, y_values, min_points, top_n=3) -> List[dict]:
     """
     기본 슬라이딩 윈도우 분석.
     :param time_seconds: Time series data (pandas Series).
@@ -87,7 +87,7 @@ def analyze_column(time_seconds, y_values, top_n=3) -> List[dict]:
     """
     results = []
     for i in range(len(time_seconds)):
-        for j in range(i + 10, len(time_seconds)):
+        for j in range(i + min_points, len(time_seconds)):
             x = time_seconds.iloc[i:j].to_numpy().reshape(-1, 1)
             y = y_values.iloc[i:j]
             if np.any(np.isnan(x)) or np.any(np.isnan(y)):
