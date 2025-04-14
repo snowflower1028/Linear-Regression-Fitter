@@ -12,6 +12,7 @@ from analyzer import (
     analyze_column_with_saturation_cutoff,
     visualize_best_fits
 )
+from streamlit_ui import run_carousel_ui
 
 st.set_page_config(page_title="Linear Fit Analyzer", layout="wide")
 st.title("📈 Linear Regression Analyzer with Saturation Detection")
@@ -19,21 +20,16 @@ st.markdown(
     """
     This app analyzes time series data to find linear regions and visualize the results.
     
-    `version 1.0.0 (2025-04-14, Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee))`
+    `version 1.1.0 (2025-04-14, Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee))`
 
     - Upload an Excel file with time series data.    
     """
 )
 
 # Initialize session state variables
-if "analysis_done" not in st.session_state:
-    st.session_state["analysis_done"] = False
-if "result_df" not in st.session_state:
-    st.session_state["result_df"] = None
-if "plot_paths" not in st.session_state:
-    st.session_state["plot_paths"] = []
-if "img_idx" not in st.session_state:
-    st.session_state["img_idx"] = 0
+for key in ["analysis_done", "result_df", "plot_paths", "img_idx", "df", "time_seconds", "top_results_dict"]:
+    if key not in st.session_state:
+        st.session_state[key] = None if key != "analysis_done" else False
 
 uploaded_file = st.file_uploader("📂 Upload Excel File (.xlsx)", type=["xlsx"])
 
@@ -46,24 +42,27 @@ if uploaded_file:
         data_columns = df.columns[start_col_idx:]
         total_columns = len(data_columns)
 
+        st.session_state["df"] = df
+        st.session_state["time_seconds"] = time_seconds
+
         # 파일 인식 성공시 다음으로 넘어감. 실패시 Exception으로 넘어감 당연함.
         st.success(f"✅ File loaded. Found {total_columns} data columns for analysis.")
 
-        # Analysis mode and parameters
-        analysis_mode = st.radio("Select Analysis Type", ["General Sliding Window", "Detect Saturation"])
-        num_best = st.slider("🔢 Number of Best Fits to Display", min_value=1, max_value=5, value=3)
-        min_segment_ratio = st.slider("📏 Minimum segment length (% of total points)", min_value=5, max_value=100, value=30, step=1)
+        analysis_mode = st.radio("Select Analysis Type", ["range", "saturation"])
+        num_best = st.slider("Number of Best Fits to Display", min_value=1, max_value=5, value=3)
         selected_columns = st.multiselect(
             "🔢 Select columns to analyze",
             options=list(data_columns),
             default=list(data_columns)
         )
-        
+        min_segment_ratio = st.slider("📏 Minimum segment length (% of total points)", min_value=5, max_value=100, value=30, step=1)
+
         # Push the button to start analysis
         # if로 안 해놨더니 그냥 막 돌아가버림.
         if st.button("🚀 Run Analysis"):
             result_dict = {}
             plot_paths = []
+            top_results_dict = {}
             progress_bar = st.progress(0)
 
             for i, col in enumerate(selected_columns):
@@ -71,10 +70,10 @@ if uploaded_file:
                 total_points = len(time_seconds)
                 min_points = max(2, int(total_points * (min_segment_ratio / 100)))
 
-                if analysis_mode == "General Sliding Window":
+                if analysis_mode == "range":
                     top_results = analyze_column(time_seconds, y_values, min_points, top_n=num_best)
                     cutoff_idx = None
-                elif analysis_mode == "Detect Saturation":
+                else:
                     top_results, cutoff_idx = analyze_column_with_saturation_cutoff(
                         time_seconds, y_values,
                         top_n=num_best,
@@ -92,6 +91,7 @@ if uploaded_file:
                     row += [result[0], result[1], result[2]]
                 result_dict[col] = row
 
+                top_results_dict[col] = (top_results, cutoff_idx)
                 progress_bar.progress((i + 1) / len(selected_columns))
 
             row_labels = []
@@ -103,6 +103,7 @@ if uploaded_file:
 
             st.session_state["result_df"] = clean_result_df
             st.session_state["plot_paths"] = plot_paths
+            st.session_state["top_results_dict"] = top_results_dict
             st.session_state["analysis_done"] = True
             st.success("✅ Analysis complete.")
 
@@ -113,6 +114,9 @@ if uploaded_file:
 if st.session_state["analysis_done"]:
     result_df = st.session_state["result_df"]
     plot_paths = st.session_state["plot_paths"]
+    df = st.session_state["df"]
+    time_seconds = st.session_state["time_seconds"]
+    top_results_dict = st.session_state["top_results_dict"]
 
     st.markdown("### 📋 Summary of Best Fits")
     st.dataframe(result_df, use_container_width=True)
@@ -140,27 +144,6 @@ if st.session_state["analysis_done"]:
             mime="application/zip"
         )
 
-        # Carousel 형식으로 플롯 미리보기 (할 때 마다 새로 그려짐 진짜 케로셀 아님)
-        st.markdown("### 🖼 Preview Plots")
-
-        col1, col2, col3 = st.columns([1, 6, 1])
-
-        with col1:
-            if st.button("◀️ Prev") and st.session_state["img_idx"] > 0:
-                st.session_state["img_idx"] -= 1
-
-        with col3:
-            if st.button("Next ▶️") and st.session_state["img_idx"] < len(plot_paths) - 1:
-                st.session_state["img_idx"] += 1
-
-        idx = st.session_state["img_idx"]
-        current_img_path = plot_paths[idx]
-
-        with open(current_img_path, "rb") as f:
-            img_data = f.read()
-            b64_encoded = base64.b64encode(img_data).decode("utf-8")
-            st.markdown(
-                f'<img src="data:image/png;base64,{b64_encoded}" style="width: 75%; display: block; margin: 0 auto;"/>',
-                unsafe_allow_html=True
-            )
-        st.caption(f"{os.path.basename(current_img_path)} ({idx+1}/{len(plot_paths)})")
+    # Plotly를 사용한 interactive chart를 표시. stream_ui.py에서 실행됨
+    st.markdown("### 🖼 Interactive Plot Viewer")
+    run_carousel_ui(df, time_seconds, top_results_dict, num_best=num_best)
