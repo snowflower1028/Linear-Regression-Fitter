@@ -85,7 +85,22 @@ def display_best_fits_plotly(time_seconds, y_values, best_results, label, cutoff
     st.plotly_chart(fig, use_container_width=True)
 
 def run_carousel_ui(df, time_seconds, top_results_dict, num_best=3):
-    selected_col = st.select_slider("🔄 Select column to visualize", options=list(top_results_dict.keys()))
+    """
+    Display interactive plot viewer using precomputed best-fit results.
+    :param df: DataFrame with measurement data
+    :param time_seconds: Converted time column
+    :param top_results_dict: Dictionary {column: (top_results, cutoff_idx)}
+    :param num_best: Number of fits to display
+    """
+    if not top_results_dict:
+        st.warning("❗ 분석 결과가 없습니다.")
+        return
+
+    selected_col = st.selectbox("🔄 Select column to visualize", options=list(top_results_dict.keys()))
+
+    if selected_col not in top_results_dict or top_results_dict[selected_col] is None:
+        st.warning("❗ 선택한 열에 대한 결과가 없습니다.")
+        return
 
     y_values = pd.to_numeric(df[selected_col], errors="coerce")
     top_results, cutoff_idx = top_results_dict[selected_col]
