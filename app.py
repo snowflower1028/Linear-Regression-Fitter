@@ -44,8 +44,10 @@ if uploaded_file:
         data_columns = df.columns[start_col_idx:]
         total_columns = len(data_columns)
 
+        # 파일 인식 성공시 다음으로 넘어감. 실패시 Exception으로 넘어감 당연함.
         st.success(f"✅ File loaded. Found {total_columns} data columns for analysis.")
 
+        # Analysis mode and parameters
         analysis_mode = st.radio("Select Analysis Type", ["General Sliding Window", "Detect Saturation"])
         num_best = st.slider("🔢 Number of Best Fits to Display", min_value=1, max_value=5, value=3)
         min_segment_ratio = st.slider("📏 Minimum segment length (% of total points)", min_value=5, max_value=100, value=30, step=1)
@@ -55,6 +57,8 @@ if uploaded_file:
             default=list(data_columns)
         )
         
+        # Push the button to start analysis
+        # if로 안 해놨더니 그냥 막 돌아가버림.
         if st.button("🚀 Run Analysis"):
             result_dict = {}
             plot_paths = []
@@ -103,7 +107,7 @@ if uploaded_file:
     except Exception as e:
         st.error(f"❌ Error processing file: {e}")
 
-# 결과 인터페이스 버튼 눌렀을 때 초기화 되는 것을 방지하기 위해 세션 상태확인인
+# 결과 인터페이스 버튼 눌렀을 때 초기화 되는 것을 방지하기 위해 세션 상태확인
 if st.session_state["analysis_done"]:
     result_df = st.session_state["result_df"]
     plot_paths = st.session_state["plot_paths"]
@@ -134,7 +138,8 @@ if st.session_state["analysis_done"]:
             mime="application/zip"
         )
 
-        st.markdown("### 🖼 Preview Plots One-by-One")
+        # Carousel 형식으로 플롯 미리보기 (할 때 마다 새로 그려짐 진짜 케로셀 아님)
+        st.markdown("### 🖼 Preview Plots")
 
         col1, col2, col3 = st.columns([1, 6, 1])
 

@@ -4,6 +4,8 @@
 
 import os
 from datetime import datetime, timedelta
+from typing import List, Tuple
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,7 +13,14 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 
-def time_to_seconds_from_any(val, base=None):
+def time_to_seconds_from_any(val, base=None) -> float:
+    """
+    엑셀에서 시간을 자꾸 이상한걸로 바꿔서 다시 바꿔주는 함수.
+    Supports datetime, timedelta, string (HH:MM:SS), float (days), and int (seconds).
+    :param val: The time value to convert.
+    :param base: Optional base time in seconds for relative conversion. (default: None))
+    :return: Time in seconds.
+    """
     try:
         if isinstance(val, (datetime, pd.Timestamp)):
             seconds = val.hour * 3600 + val.minute * 60 + val.second
@@ -32,11 +41,27 @@ def time_to_seconds_from_any(val, base=None):
 
 
 def convert_time_column(time_series):
+    """
+    Convert a time series column to seconds.
+    처음엔 그냥 바꾸면 되는 줄 알았음.
+    :param time_series: A pandas Series containing time values.
+    :return: A pandas Series with time values converted to seconds.
+    """
     base_seconds = time_to_seconds_from_any(time_series.iloc[0])
     return time_series.apply(lambda x: time_to_seconds_from_any(x, base=base_seconds))
 
 
-def detect_linear_region(x, y, window=5, slope_threshold=0.05):
+def detect_linear_region(x, y, window=5, slope_threshold=0.05) -> int:
+    """
+    포화 구간 탐지하는 함수.
+    일정 구간을 잡고 그 구간에서 선형 회귀를 돌려서 기울기를 구함.
+    기울기가 threshold보다 작아지면 그 지점부터 포화 구간으로 판단.
+    :param x: Time series data (numpy array).
+    :param y: Corresponding values (numpy array).
+    :param window: Size of the sliding window for linear regression.
+    :param slope_threshold: Slope threshold for detecting linear regions.
+    :return: The index of the first point where the slope is below the threshold.
+    """
     slopes = []
     for i in range(len(x) - window):
         xi = x[i:i + window].reshape(-1, 1)
@@ -52,7 +77,14 @@ def detect_linear_region(x, y, window=5, slope_threshold=0.05):
     return len(x)
 
 
-def analyze_column(time_seconds, y_values, top_n=3):
+def analyze_column(time_seconds, y_values, top_n=3) -> List[dict]:
+    """
+    기본 슬라이딩 윈도우 분석.
+    :param time_seconds: Time series data (pandas Series).
+    :param y_values: Corresponding values (pandas Series).
+    :param top_n: Number of top results to return.
+    :return: List of top results with their R^2, slope, and intercept.
+    """
     results = []
     for i in range(len(time_seconds)):
         for j in range(i + 10, len(time_seconds)):
@@ -86,7 +118,17 @@ def analyze_column(time_seconds, y_values, top_n=3):
     return top_results
 
 
-def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_points=10, max_points=15, slope_threshold=0.05):
+def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_points=10, max_points=15, slope_threshold=0.05) -> Tuple[List[dict], int]:
+    """
+    포화 구간 탐지 후 슬라이딩 윈도우 분석.
+    :param time_seconds: Time series data (pandas Series).
+    :param y_values: Corresponding values (pandas Series).
+    :param top_n: Number of top results to return.
+    :param min_points: 해당 개수 이상 탐색
+    :param max_points: 구간 최대 크기기
+    :param slope_threshold: Slope threshold for detecting linear regions.
+    :return: List of top results with their R^2, slope, and intercept., cutoff index.
+    """
     x = time_seconds.reset_index(drop=True)
     y = y_values.reset_index(drop=True)
     cutoff = detect_linear_region(x.to_numpy(), y.to_numpy(), window=5, slope_threshold=slope_threshold)
@@ -130,6 +172,16 @@ def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_p
 
 
 def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="plots", cutoff_idx=None, num_best=3):
+    """
+    Visualize the best fits for the given time series data.
+    :param time_seconds: Time series data (pandas Series).
+    :param y_values: Corresponding values (pandas Series).
+    :param best_results: List of best results with their R^2, slope, and intercept.
+    :param label: Label for the plot title.
+    :param out_dir: Output directory for saving the plot.
+    :param cutoff_idx: Index of the cutoff point for saturation detection.
+    :param num_best: 몇 개까지 그릴지
+    """
     os.makedirs(out_dir, exist_ok=True)
 
     x_all = time_seconds.to_numpy()
