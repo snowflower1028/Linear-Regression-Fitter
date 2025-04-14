@@ -4,7 +4,7 @@ This program performs **linear regression** between time and multiple data colum
 
 이 프로그램은 시간과 관측값 간의 선형 회귀를 다양한 구간에서 수행하여, 가장 피팅이 잘 되는 구간을 자동으로 탐색합니다.
 
-➡️ [Streamlit Cloud에서 사용 가능](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/)
+➡️ [Can be used on Streamlit Cloud](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/)
 
 ---
 
@@ -60,7 +60,7 @@ Once analysis is complete, download options will be shown:
   - (if enabled) Saturation cutoff point
 
 - 🖼 **Interactive Visualization**
-  From **v1.1.0**, you can now preview best fitting results using **interactive Plotly charts** directly in the app.
+  - From **v1.1.0**, you can now preview best fitting results using **interactive Plotly charts** directly in the app.
   - Visualize top 1 to 5 regression results per column.
   - Hover to inspect data points and regression lines.
   - Saturation cutoff lines will also be marked if applicable.
