@@ -18,7 +18,9 @@ st.title("📈 Linear Regression Analyzer with Saturation Detection")
 st.markdown(
     """
     This app analyzes time series data to find linear regions and visualize the results.
-    `version 0.1.1 (2025-04-14, WLab Minsoo Lee)`
+    
+    `version 0.1.1 (2025-04-14, Seoul National University, College of Pharmacy WLab(Prof. Wooin Lee) Minsoo Lee)`
+    
     - Upload an Excel file with time series data.    
     """
 )
