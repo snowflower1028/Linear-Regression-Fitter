@@ -1,0 +1,7 @@
+[theme]
+base="light"
+primaryColor="#00BFFF"  # 버튼, 선택 강조 색 (DeepSkyBlue)
+backgroundColor="#F0F8FF"  # 전체 배경색 (AliceBlue)
+secondaryBackgroundColor="#E6F7FF"  # 위젯 배경 (하늘색 계열)
+textColor="#000000"  # 기본 텍스트 검정
+font="sans serif"

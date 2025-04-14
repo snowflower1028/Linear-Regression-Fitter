@@ -1,0 +1,20 @@
+# Ignore Python compiled files
+*.pyc
+*.pyo
+__pycache__/
+
+# Ignore build files
+build/
+dist/
+run.spec
+
+# Ignore virtual environment directories
+.venv/
+
+# Ignore logs and temporary files
+plots/
+*.log
+*.tmp
+
+# Ignore icon
+*.ico
