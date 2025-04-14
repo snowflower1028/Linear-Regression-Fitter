@@ -5,6 +5,7 @@ This program perform linear regression between time and any values for variaty o
 Data can be uploaded with Excel file (.xlsx) with following format.
 
 | Time | Data Index (A1) | A2 | ... |
+|----|-----|-----|----|
 | 0:00 | 123980 | 213900 | ... |
 | 1:00 | 192388 | 221980 | ... |
 |...|...|...|...|
