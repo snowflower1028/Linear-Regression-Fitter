@@ -82,7 +82,7 @@ def display_best_fits_plotly(time_seconds, y_values, best_results, label, cutoff
         height=500
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    return fig
 
 def run_carousel_ui(df, time_seconds, top_results_dict, num_best=3):
     """
@@ -105,7 +105,7 @@ def run_carousel_ui(df, time_seconds, top_results_dict, num_best=3):
     y_values = pd.to_numeric(df[selected_col], errors="coerce")
     top_results, cutoff_idx = top_results_dict[selected_col]
 
-    display_best_fits_plotly(
+    fig = display_best_fits_plotly(
         time_seconds,
         y_values,
         best_results=top_results,
@@ -113,3 +113,4 @@ def run_carousel_ui(df, time_seconds, top_results_dict, num_best=3):
         cutoff_idx=cutoff_idx,
         num_best=num_best
     )
+    st.plotly_chart(fig, use_container_width=True)
