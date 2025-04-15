@@ -1,11 +1,11 @@
 # app.py
 import os
-import base64
 import zipfile
+from io import BytesIO
 from datetime import datetime
 import streamlit as st
 import pandas as pd
-from io import BytesIO
+
 from analyzer import (
     convert_time_column,
     analyze_column,

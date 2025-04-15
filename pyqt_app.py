@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtGui import QFontDatabase, QFont, QIcon
 
 from analyzer import (
     convert_time_column, analyze_column, analyze_column_with_saturation_cutoff,
@@ -77,6 +78,12 @@ class AnalysisThread(QThread):
                 top_results_dict[col] = (best_results, cutoff_idx)
                 self.progress_changed.emit(int((i + 1) / total_cols * 100))
 
+                # 매 10회마다 잠깐 쉬어 메인 이벤트 처리를 허용
+                if i % 10 == 0:
+                    QThread.msleep(1)
+                    
+                self.progress_changed.emit(int((i + 1) / total_cols * 100))
+
             row_labels = []
             for i in range(1, self.num_best + 1):
                 row_labels += [f"Best {i} 시간", f"Best {i} r²", f"Best {i} slope"]
@@ -92,7 +99,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Linear Regression Analyzer")
-        self.resize(1200, 800)
+        self.resize(1200, 1200)
+        self.setWindowIcon(QIcon("./assets/icon.png"))
+
         self.df = None              # 업로드된 DataFrame
         self.time_seconds = None    # 시간 데이터 (pandas Series)
         self.result_df = None       # 분석 결과 요약 DataFrame
@@ -112,8 +121,8 @@ class MainWindow(QMainWindow):
 
         # 제목 및 설명 (좌측 정렬)
         title_label = QLabel("<h2>Linear Regression Analyzer</h2>"
-                             "<p>version 1.1.0 (2025-04-14, Minsoo Lee, Seoul National University, College of Pharmacy, "
-                             "WLab(Prof. Wooin Lee))</p>"
+                             "<p>version 1.2.0 (2025-04-15)</p>"
+                             "<p>Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee)</p>"
                              "<p>Upload an Excel file and configure analysis options.</p>")
         title_label.setAlignment(Qt.AlignLeft)
         layout_before.addWidget(title_label)
@@ -170,8 +179,9 @@ class MainWindow(QMainWindow):
 
         layout_before.addWidget(options_group)
         self.run_btn = QPushButton("Run Analysis")
+        self.run_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.run_btn.clicked.connect(self.on_run_analysis)
-        layout_before.addWidget(self.run_btn, alignment=Qt.AlignLeft)
+        layout_before.addWidget(self.run_btn)
 
         self.stacked.addWidget(self.page_before)
 
@@ -207,9 +217,7 @@ class MainWindow(QMainWindow):
         self.web_view = QWebEngineView()
         layout_after.addWidget(self.web_view)
 
-        # "Run Analysis Again" 버튼을 좌우 꽉 채우도록 설정
-        self.btn_rerun = QPushButton("Run Analysis Again")
-        from PyQt5.QtWidgets import QSizePolicy
+        self.btn_rerun = QPushButton("Rerun Analysis")
         self.btn_rerun.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_rerun.clicked.connect(self.on_rerun_analysis)
         layout_after.addWidget(self.btn_rerun)
@@ -351,11 +359,23 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    font_id = QFontDatabase.addApplicationFont("./assets/font.ttf")
+    if font_id != -1:
+        font_families = QFontDatabase.applicationFontFamilies(font_id)
+        if font_families:
+            embedded_font = QFont(font_families[0], 9)  # 원하는 폰트 크기로 생성
+            app.setFont(embedded_font)
+        else:
+            default_font = QFont("Arial", 9)
+            app.setFont(default_font)
+    else:
+        default_font = QFont("Arial", 9)
+        app.setFont(default_font)
+    
     style_sheet = """
     QWidget { 
         background-color: #f8f8f8; 
-        font-family: 'Segoe UI', sans-serif; 
-        font-size: 12pt;
     }
     QPushButton { 
         background-color: #3e8ef7; 
@@ -372,10 +392,13 @@ def main():
         margin-top: 10px;
         border-radius: 4px;
     }
-    QGroupBox::title { 
+    QGroupBox::title {
         subcontrol-origin: margin; 
-        subcontrol-position: top center; 
-        padding: 0 3px;
+        subcontrol-position: top center;
+        background-color: #f8f8f8;
+        padding: 2px 8px;
+        margin-top: -4px;
+        border-radius: 4px;
     }
     QTableWidget {
         background: white;

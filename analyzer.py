@@ -6,6 +6,9 @@ import os
 from datetime import datetime, timedelta
 from typing import List, Tuple
 
+import matplotlib
+matplotlib.use("Agg")
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
