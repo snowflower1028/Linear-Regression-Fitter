@@ -5,6 +5,7 @@
 import os
 from datetime import datetime, timedelta
 from typing import List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import matplotlib
 matplotlib.use("Agg")
@@ -119,6 +120,43 @@ def analyze_column(time_seconds, y_values, min_points, top_n=3) -> List[dict]:
         top_results.append(["N/A", "N/A", "N/A", None])
 
     return top_results
+
+
+def analyze_column_optimized(time_seconds, y_values, min_points, top_n=3):
+    n = len(time_seconds)
+    results = []
+    
+    # 모든 가능한 윈도우 크기 생성
+    window_sizes = np.arange(min_points, n + 1)
+    
+    for window_size in window_sizes:
+        starts = np.arange(n - window_size + 1)
+        ends = starts + window_size
+        
+        # 벡터화된 R² 계산
+        x_windows = [time_seconds.iloc[s:e].values.reshape(-1,1) for s,e in zip(starts, ends)]
+        y_windows = [y_values.iloc[s:e].values for s,e in zip(starts, ends)]
+        
+        # 병렬 처리
+        with ThreadPoolExecutor() as executor:
+            futures = [executor.submit(calculate_r2, x, y) for x,y in zip(x_windows, y_windows)]
+            batch_results = [f.result() for f in as_completed(futures)]
+        
+        results.extend(batch_results)
+
+    # 상위 N개 결과 추출
+    results = sorted(results, key=lambda x: -x["r2"])[:top_n]
+    return format_results(results, time_seconds, top_n)
+
+def calculate_r2(x, y):
+    model = LinearRegression().fit(x, y)
+    return {
+        "r2": r2_score(y, model.predict(x)),
+        "slope": model.coef_[0] * 60,
+        "intercept": model.intercept_,
+        "start_idx": x[0][0],
+        "end_idx": x[-1][0]
+    }
 
 
 def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_points=10, max_points=15, slope_threshold=0.05) -> Tuple[List[dict], int]:
@@ -246,3 +284,10 @@ def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="pl
     plt.savefig(os.path.join(out_dir, f"{label}_best{num_best}_fits.png"))
     plt.close()
 
+if __name__ == "__main__":
+    df = pd.read_excel(uploaded_file, header=2).dropna(axis=1, how='all')
+    time_column = df.iloc[:, 0]
+    time_seconds = convert_time_column(time_column)
+    start_col_idx = df.columns.get_loc("A1")
+    data_columns = df.columns[start_col_idx:]
+    total_columns = len(data_columns)

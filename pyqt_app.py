@@ -86,14 +86,14 @@ class AnalysisThread(QThread):
 
             row_labels = []
             for i in range(1, self.num_best + 1):
-                row_labels += [f"Best {i} 시간", f"Best {i} r²", f"Best {i} slope"]
+                row_labels += [f"Best {i} Time", f"Best {i} r²", f"Best {i} slope"]
             result_df = pd.DataFrame(result_dict, index=row_labels)
             self.result_ready.emit(result_df, top_results_dict, time_seconds)
         except Exception as e:
             print("Error during analysis:", e)
 
 # -----------------------------
-# 메인 윈도우 클래스 (Modern & Simple 디자인)
+# 메인 윈도우 클래스
 # -----------------------------
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -121,21 +121,47 @@ class MainWindow(QMainWindow):
 
         # 제목 및 설명 (좌측 정렬)
         title_label = QLabel("<h2>Linear Regression Analyzer</h2>"
-                             "<p>version 1.2.0 (2025-04-15)</p>"
+                             "<p>version 1.2.1 (2025-04-16)</p>"
                              "<p>Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee)</p>"
                              "<p>Upload an Excel file and configure analysis options.</p>")
         title_label.setAlignment(Qt.AlignLeft)
         layout_before.addWidget(title_label)
 
-        # 파일 업로드 영역 (좌측 정렬)
-        file_upload_layout = QHBoxLayout()
+        # 파일 업로드 영역을 별도 위젯으로 분리 (박스 제목 없음)
+        upload_box = QWidget()  # QGroupBox 대신 QWidget 사용
+        # 배경색을 주변(#f8f8f8)보다 약 10% 어둡게 (예: #dfdfdf)와 테두리 효과 적용
+        upload_box.setStyleSheet("""
+            QWidget {
+                background-color: #dfdfdf;
+                border-radius: 4px;
+            }
+            QPushButton {
+                background-color: #3e8ef7;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background-color: #6ab7ff;
+            }
+        """)
+        upload_layout = QHBoxLayout(upload_box)
+        upload_layout.setContentsMargins(10, 10, 10, 10)
+        upload_layout.setAlignment(Qt.AlignVCenter)
+
         self.file_label = QLabel("Upload Excel file (.xlsx)")
-        self.file_label.setAlignment(Qt.AlignLeft)
+        self.file_label.setAlignment(Qt.AlignVCenter | Qt.AlignCenter)
         self.file_btn = QPushButton("Upload")
+        self.file_btn.setFixedWidth(self.width() // 4)
         self.file_btn.clicked.connect(self.on_upload_file)
-        file_upload_layout.addWidget(self.file_label)
-        file_upload_layout.addWidget(self.file_btn)
-        layout_before.addLayout(file_upload_layout)
+
+        upload_layout.addWidget(self.file_label)
+        upload_layout.addWidget(self.file_btn)
+
+        # 파일 업로드 영역(박스) 추가
+        layout_before.addWidget(upload_box)
+
 
         options_group = QGroupBox("Analysis Setting")
         options_layout = QVBoxLayout(options_group)
@@ -318,7 +344,8 @@ class MainWindow(QMainWindow):
         best_results, cutoff_idx = self.top_results_dict[col]
         y_values = pd.to_numeric(self.df[col], errors="coerce")
         html_str = display_best_fits_plotly(self.time_seconds, y_values, best_results, label=col,
-                                             cutoff_idx=cutoff_idx, num_best=self.spin_best.value()).to_html(include_plotlyjs='cdn')
+                                             cutoff_idx=cutoff_idx, num_best=self.spin_best.value())
+        html_str = html_str.update_layout(height=450).to_html(include_plotlyjs='cdn')
         self.web_view.setHtml(html_str)
 
     def on_download_excel(self):
@@ -402,6 +429,11 @@ def main():
     }
     QTableWidget {
         background: white;
+        font: 8pt 'Noto Sans';
+    }
+    QHeaderView::section {
+        font: 8pt "Noto Sans";
+        background-color: #f8f8f8;
     }
     QProgressBar {
         text-align: center;
