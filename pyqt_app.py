@@ -1,10 +1,7 @@
 import sys
 import os
 import pandas as pd
-from datetime import timedelta, datetime
-import numpy as np
-import matplotlib.pyplot as plt
-import plotly.graph_objects as go
+from datetime import datetime
 import zipfile
 
 from PyQt5.QtWidgets import (
@@ -18,7 +15,7 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtGui import QFontDatabase, QFont, QIcon
 
 from analyzer import (
-    convert_time_column, analyze_column, analyze_column_with_saturation_cutoff,
+    convert_time_column, analyze_column_prefix, analyze_column_with_saturation_cutoff,
     visualize_best_fits
 )
 from streamlit_ui import display_best_fits_plotly
@@ -55,7 +52,7 @@ class AnalysisThread(QThread):
                 min_points = max(2, int(total_points * (self.min_ratio / 100)))
 
                 if self.analysis_mode == "range":
-                    best_results = analyze_column(time_seconds, y_values, min_points, top_n=self.num_best)
+                    best_results = analyze_column_prefix(time_seconds, y_values, min_points, top_n=self.num_best)
                     cutoff_idx = None
                 else:
                     best_results, cutoff_idx = analyze_column_with_saturation_cutoff(
@@ -76,12 +73,6 @@ class AnalysisThread(QThread):
                     row += [res[0], res[1], res[2]]
                 result_dict[col] = row
                 top_results_dict[col] = (best_results, cutoff_idx)
-                self.progress_changed.emit(int((i + 1) / total_cols * 100))
-
-                # 매 10회마다 잠깐 쉬어 메인 이벤트 처리를 허용
-                if i % 10 == 0:
-                    QThread.msleep(1)
-                    
                 self.progress_changed.emit(int((i + 1) / total_cols * 100))
 
             row_labels = []
@@ -121,7 +112,7 @@ class MainWindow(QMainWindow):
 
         # 제목 및 설명 (좌측 정렬)
         title_label = QLabel("<h2>Linear Regression Analyzer</h2>"
-                             "<p>version 1.2.1 (2025-04-17)</p>"
+                             "<p>version 1.3.0 (2025-04-17)</p>"
                              "<p>Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee)</p>"
                              "<p>Upload an Excel file and configure analysis options.</p>")
         title_label.setAlignment(Qt.AlignLeft)

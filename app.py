@@ -8,7 +8,7 @@ import pandas as pd
 
 from analyzer import (
     convert_time_column,
-    analyze_column,
+    analyze_column_prefix,
     analyze_column_with_saturation_cutoff,
     visualize_best_fits
 )
@@ -20,7 +20,7 @@ st.markdown(
     """
     This app analyzes time series data to find linear regions and visualize the results.
     
-    `version 1.1.0 (2025-04-14, Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee))`
+    `version 1.3.0 (2025-04-17, Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee))`
 
     - Upload an Excel file with time series data.    
     """
@@ -71,7 +71,7 @@ if uploaded_file:
                 min_points = max(2, int(total_points * (min_segment_ratio / 100)))
 
                 if analysis_mode == "range":
-                    top_results = analyze_column(time_seconds, y_values, min_points, top_n=num_best)
+                    top_results = analyze_column_prefix(time_seconds, y_values, min_points, top_n=num_best)
                     cutoff_idx = None
                 else:
                     top_results, cutoff_idx = analyze_column_with_saturation_cutoff(
