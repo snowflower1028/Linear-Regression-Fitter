@@ -5,6 +5,7 @@ This program performs **linear regression** between time and multiple data colum
 이 프로그램은 시간과 관측값 간의 선형 회귀를 다양한 구간에서 수행하여, 가장 피팅이 잘 되는 구간을 자동으로 탐색합니다.
 
 ➡️ [Can be used on Streamlit Cloud](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/)
+➡️ [Windows Executable](https://drive.google.com/file/d/1psZ2h_yWe0FFY0abXpzv0f4ywYzIf89P/view?usp=drive_link)
 
 ---
 
@@ -77,6 +78,7 @@ To use:
 This app is available as:
 - ✅ A web app via [Streamlit Cloud](https://linear-regression-fitter-9a38ezlgjpskkj9fcwvxji.streamlit.app/)
 - ✅ A Windows desktop app (generated via [Nativefier](https://drive.google.com/file/d/1Dfah4LvvVWkrbT37a9C-1f3nhCMH-me8/view?usp=sharing))
+- ✅ A Windows desktop app (build via [PyQt5](https://drive.google.com/file/d/1psZ2h_yWe0FFY0abXpzv0f4ywYzIf89P/view?usp=drive_link)
 
 ---
 
