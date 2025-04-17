@@ -86,7 +86,7 @@ class AnalysisThread(QThread):
 
             row_labels = []
             for i in range(1, self.num_best + 1):
-                row_labels += [f"Best {i} Time", f"Best {i} r²", f"Best {i} slope"]
+                row_labels += [f"Best {i} Region", f"Best {i} r²", f"Best {i} slope"]
             result_df = pd.DataFrame(result_dict, index=row_labels)
             self.result_ready.emit(result_df, top_results_dict, time_seconds)
         except Exception as e:
@@ -121,7 +121,7 @@ class MainWindow(QMainWindow):
 
         # 제목 및 설명 (좌측 정렬)
         title_label = QLabel("<h2>Linear Regression Analyzer</h2>"
-                             "<p>version 1.2.1 (2025-04-16)</p>"
+                             "<p>version 1.2.1 (2025-04-17)</p>"
                              "<p>Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee)</p>"
                              "<p>Upload an Excel file and configure analysis options.</p>")
         title_label.setAlignment(Qt.AlignLeft)
