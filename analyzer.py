@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pandas as pd
+import heapq
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
@@ -122,31 +123,68 @@ def analyze_column(time_seconds, y_values, min_points, top_n=3) -> List[dict]:
     return top_results
 
 
-def analyze_column_optimized(time_seconds, y_values, min_points, top_n=3):
-    n = len(time_seconds)
-    results = []
-    
-    # 모든 가능한 윈도우 크기 생성
-    window_sizes = np.arange(min_points, n + 1)
-    
-    for window_size in window_sizes:
-        starts = np.arange(n - window_size + 1)
-        ends = starts + window_size
-        
-        # 벡터화된 R² 계산
-        x_windows = [time_seconds.iloc[s:e].values.reshape(-1,1) for s,e in zip(starts, ends)]
-        y_windows = [y_values.iloc[s:e].values for s,e in zip(starts, ends)]
-        
-        # 병렬 처리
-        with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(calculate_r2, x, y) for x,y in zip(x_windows, y_windows)]
-            batch_results = [f.result() for f in as_completed(futures)]
-        
-        results.extend(batch_results)
+def _compute_segment(args):
+    x_win, y_win, start_idx, end_idx = args
+    # 여기로는 이미 NaN이 없는 세그먼트만 들어온다.
+    model = LinearRegression().fit(x_win, y_win)
+    r2 = r2_score(y_win, model.predict(x_win))
+    slope = model.coef_[0] * 60
+    intercept = model.intercept_
+    return {
+        "r2": r2,
+        "slope": slope,
+        "intercept": intercept,
+        "start_idx": start_idx,
+        "end_idx": end_idx
+    }
 
-    # 상위 N개 결과 추출
-    results = sorted(results, key=lambda x: -x["r2"])[:top_n]
-    return format_results(results, time_seconds, top_n)
+def analyze_column_optimized(time_seconds: pd.Series,
+                             y_values: pd.Series,
+                             min_points: int,
+                             top_n: int = 3):
+    """
+    NaN을 제거하고 ThreadPoolExecutor로 병렬화한 슬라이딩 윈도우 분석.
+    :return: [["t0-t1", r2, "slopex+intercept", 원본 dict], ...]
+    """
+    n = len(time_seconds)
+    tasks = []
+
+    # 1) (x_win, y_win, start, end) 에 NaN 검사 추가
+    for window_size in range(min_points, n + 1):
+        for start in range(0, n - window_size + 1):
+            end = start + window_size
+            x_win = time_seconds.iloc[start:end].values.reshape(-1, 1)
+            y_win = y_values.iloc[start:end].values
+
+            # NaN 포함된 세그먼트는 건너뛴다
+            if np.isnan(x_win).any() or np.isnan(y_win).any():
+                continue
+
+            tasks.append((x_win, y_win, start, end - 1))
+
+    # 2) 병렬 실행 (한 번만 ThreadPoolExecutor 생성)
+    results = []
+    with ThreadPoolExecutor() as executor:
+        for res in executor.map(_compute_segment, tasks):
+            results.append(res)
+
+    # 3) r2 기준 상위 top_n 결과 선택
+    top_results = sorted(results, key=lambda x: -x["r2"])[:top_n]
+
+    # 4) 기존 formatter와 동일하게 문자열화
+    formatted = []
+    for res in top_results:
+        t0 = int(time_seconds.iloc[res["start_idx"]])
+        t1 = int(time_seconds.iloc[res["end_idx"]])
+        range_txt = f"{str(timedelta(seconds=t0))}-{str(timedelta(seconds=t1))}"
+        slope_expr = f"{int(res['slope'])}x+{int(res['intercept'])}"
+        formatted.append([range_txt, round(res["r2"], 4), slope_expr, res])
+
+    # 5) 모자란 슬롯은 N/A로 채우기
+    while len(formatted) < top_n:
+        formatted.append(["N/A", "N/A", "N/A", None])
+
+    return formatted
 
 def calculate_r2(x, y):
     model = LinearRegression().fit(x, y)
@@ -157,6 +195,74 @@ def calculate_r2(x, y):
         "start_idx": x[0][0],
         "end_idx": x[-1][0]
     }
+
+
+def analyze_column_prefix(time_seconds: pd.Series,
+                          y_values: pd.Series,
+                          min_points: int,
+                          top_n: int = 3):
+    # 1) 누적합 계산 (numpy array가 더 빠릅니다)
+    x = time_seconds.to_numpy()
+    y = y_values.to_numpy()
+    Sx  = np.cumsum(x)
+    Sy  = np.cumsum(y)
+    Sxx = np.cumsum(x * x)
+    Syy = np.cumsum(y * y)
+    Sxy = np.cumsum(x * y)
+
+    def window_stats(i, j):
+        """i..j 구간에 대한 회귀계수와 R² 계산 (O(1))."""
+        L = j - i + 1
+        sum_x  = Sx[j]  - (Sx[i-1]  if i>0 else 0)
+        sum_y  = Sy[j]  - (Sy[i-1]  if i>0 else 0)
+        sum_xx = Sxx[j] - (Sxx[i-1] if i>0 else 0)
+        sum_yy = Syy[j] - (Syy[i-1] if i>0 else 0)
+        sum_xy = Sxy[j] - (Sxy[i-1] if i>0 else 0)
+
+        denom = L*sum_xx - sum_x*sum_x
+        if denom == 0:
+            return None  # 직선이 불가능한 경우
+        m = (L*sum_xy - sum_x*sum_y) / denom
+        b = (sum_y - m*sum_x) / L
+
+        # R² 계산
+        num = (L*sum_xy - sum_x*sum_y)**2
+        den = denom * (L*sum_yy - sum_y*sum_y)
+        r2 = num/den if den>0 else 0
+
+        return {"r2": r2, "slope": m*60, "intercept": b,
+                "start_idx": i, "end_idx": j}
+
+    # 2) 모든 구간에 대해 O(n²) 반복
+    #    top_n 유지 위해 min-heap 사용 (크기 top_n)
+    heap = []
+    n = len(x)
+    for i in range(n):
+        # j 최소 i+min_points-1 부터 시작
+        for j in range(i + min_points - 1, n):
+            stats = window_stats(i, j)
+            if not stats: 
+                continue
+            # heap 에 (r2, stats)로 pushpop
+            if len(heap) < top_n:
+                heapq.heappush(heap, (stats["r2"], stats))
+            else:
+                heapq.heappushpop(heap, (stats["r2"], stats))
+
+    # 3) 힙에서 상위 N개 뽑아서 정렬
+    top = sorted(heap, key=lambda x: -x[0])
+    formatted = []
+    for r2, res in top:
+        t0 = str(timedelta(seconds=int(x[res["start_idx"]])))
+        t1 = str(timedelta(seconds=int(x[res["end_idx"]])))
+        formatted.append([f"{t0}-{t1}", round(r2,4),
+                          f"{int(res['slope'])}x+{int(res['intercept'])}", res])
+
+    # 부족분은 N/A로 채움
+    while len(formatted) < top_n:
+        formatted.append(["N/A","N/A","N/A", None])
+
+    return formatted
 
 
 def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_points=10, max_points=15, slope_threshold=0.05) -> Tuple[List[dict], int]:
@@ -284,10 +390,71 @@ def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="pl
     plt.savefig(os.path.join(out_dir, f"{label}_best{num_best}_fits.png"))
     plt.close()
 
+
 if __name__ == "__main__":
+    import time
+
+    # 1) 현재 폴더에서 첫 번째 Excel 파일 자동 탐색
+    folder_path = os.path.dirname(__file__)
+    excel_files = [f for f in os.listdir(folder_path) if f.endswith('.xlsx')]
+    if not excel_files:
+        raise FileNotFoundError("No Excel files found in the current folder.")
+    uploaded_file = os.path.join(folder_path, excel_files[0])
+    print(f"Using file: {uploaded_file}")
+
+    # 2) 데이터 로드
     df = pd.read_excel(uploaded_file, header=2).dropna(axis=1, how='all')
     time_column = df.iloc[:, 0]
     time_seconds = convert_time_column(time_column)
     start_col_idx = df.columns.get_loc("A1")
     data_columns = df.columns[start_col_idx:]
-    total_columns = len(data_columns)
+
+    # 3) 파라미터 설정
+    min_points = 10
+    top_n = 3
+
+    # 4) 원본 analyze_column 전체 컬럼 루프
+    t0 = time.perf_counter()
+    results_old = {}
+    for col in data_columns:
+        y_series = pd.to_numeric(df[col], errors='coerce')
+        results_old[col] = analyze_column(time_seconds, y_series, min_points, top_n=top_n)
+    dur_old = time.perf_counter() - t0
+    print(f"\n--- Original analyze_column on {len(data_columns)} columns ---")
+    print(f"Total time: {dur_old:.3f} sec")
+
+    # (옵션) 첫 번째 컬럼 결과 샘플
+    first_col = data_columns[0]
+    print(f"Sample result for '{first_col}':\n{results_old[first_col]}")
+
+    # 5) 최적화 analyze_column_optimized 전체 컬럼 루프
+    t1 = time.perf_counter()
+    results_opt = {}
+    for col in data_columns:
+        y_series = pd.to_numeric(df[col], errors='coerce')
+        results_opt[col] = analyze_column_optimized(time_seconds, y_series, min_points, top_n=top_n)
+    dur_opt = time.perf_counter() - t1
+    print(f"\n--- Optimized analyze_column_optimized on {len(data_columns)} columns ---")
+    print(f"Total time: {dur_opt:.3f} sec")
+
+    # (옵션) 첫 번째 컬럼 결과 샘플
+    print(f"Sample optimized result for '{first_col}':\n{results_opt[first_col]}")
+
+    # 6) 최적화 analyze_column_prefix 전체 컬럼 루프
+    t2 = time.perf_counter()
+    results_pre = {}
+    for col in data_columns:
+        y_series = pd.to_numeric(df[col], errors='coerce')
+        results_pre[col] = analyze_column_prefix(time_seconds, y_series, min_points, top_n=top_n)
+    dur_pre = time.perf_counter() - t2
+    print(f"\n--- Optimized analyze_column_prefix on {len(data_columns)} columns ---")
+    print(f"Total time: {dur_pre:.3f} sec")
+
+    # (옵션) 첫 번째 컬럼 결과 샘플
+    print(f"Sample optimized result for '{first_col}':\n{results_opt[first_col]}")
+
+    # 6) 속도 비교
+    print(f"\n--- Speed Comparison ---")
+    print(f"Original analyze_column: {dur_old:.3f} sec")
+    print(f"Optimized analyze_column_optimized: {dur_opt:.3f} sec")
+    print(f"Optimized analyze_column_prefix: {dur_pre:.3f} sec")
