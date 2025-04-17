@@ -19,3 +19,7 @@ plots/
 
 # Ignore icon
 *.ico
+
+# Ignore Sample data
+*.csv
+*.xlsx
