@@ -16,7 +16,7 @@ from PyQt5.QtGui import QFontDatabase, QFont, QIcon
 
 from analyzer import (
     convert_time_column, analyze_column_prefix, analyze_column_with_saturation_cutoff,
-    visualize_best_fits
+    visualize_best_fits, TIME_UNITS, read_measurements, summarize_results
 )
 from streamlit_ui import display_best_fits_plotly
 
@@ -27,20 +27,22 @@ class AnalysisThread(QThread):
     # (result_df, top_results_dict, time_seconds)를 main thread에 전달
     result_ready = pyqtSignal(object, object, object)
     progress_changed = pyqtSignal(int)
+    analysis_failed = pyqtSignal(str)
 
-    def __init__(self, df, analysis_mode, num_best, min_ratio, selected_cols):
+    def __init__(self, df, analysis_mode, num_best, min_ratio, selected_cols, numeric_unit="excel_days"):
         super().__init__()
         self.df = df
         self.analysis_mode = analysis_mode  # "range" 또는 "saturation"
         self.num_best = num_best
         self.min_ratio = min_ratio  # 최소 구간 길이 (%)
         self.selected_cols = selected_cols
+        self.numeric_unit = numeric_unit
 
     def run(self):
         try:
             # 첫 번째 열은 시간 데이터로 가정
             time_series = self.df.iloc[:, 0]
-            time_seconds = convert_time_column(time_series)
+            time_seconds = convert_time_column(time_series, numeric_unit=self.numeric_unit)
 
             result_dict = {}
             top_results_dict = {}
@@ -68,20 +70,14 @@ class AnalysisThread(QThread):
                                          num_best=self.num_best, cutoff_idx=cutoff_idx)
 
                 # 결과 테이블에 표시할 데이터 생성
-                row = []
-                for res in best_results:
-                    row += [res[0], res[1], res[2]]
-                result_dict[col] = row
+                result_dict[col] = best_results
                 top_results_dict[col] = (best_results, cutoff_idx)
                 self.progress_changed.emit(int((i + 1) / total_cols * 100))
 
-            row_labels = []
-            for i in range(1, self.num_best + 1):
-                row_labels += [f"Best {i} Region", f"Best {i} r²", f"Best {i} slope"]
-            result_df = pd.DataFrame(result_dict, index=row_labels)
+            result_df = summarize_results(result_dict, self.num_best)
             self.result_ready.emit(result_df, top_results_dict, time_seconds)
         except Exception as e:
-            print("Error during analysis:", e)
+            self.analysis_failed.emit(str(e))
 
 # -----------------------------
 # 메인 윈도우 클래스
@@ -112,7 +108,7 @@ class MainWindow(QMainWindow):
 
         # 제목 및 설명 (좌측 정렬)
         title_label = QLabel("<h2>Linear Regression Analyzer</h2>"
-                             "<p>version 1.3.0 (2025-04-17)</p>"
+                             "<p>version 1.3.1 (2026-11-24)</p>"
                              "<p>Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee)</p>"
                              "<p>Upload an Excel file and configure analysis options.</p>")
         title_label.setAlignment(Qt.AlignLeft)
@@ -157,6 +153,20 @@ class MainWindow(QMainWindow):
         options_group = QGroupBox("Analysis Setting")
         options_layout = QVBoxLayout(options_group)
         options_layout.setSpacing(10)
+
+        time_layout = QHBoxLayout()
+        time_layout.addWidget(QLabel("Numeric time unit:"))
+        self.combo_time_unit = QComboBox()
+        self.combo_time_unit.addItems(list(TIME_UNITS))
+        time_layout.addWidget(self.combo_time_unit)
+        options_layout.addLayout(time_layout)
+        options_layout.addWidget(QLabel("Text: MM:SS or HH:MM:SS. Slopes: value/min. Plots: seconds."))
+        self.spin_header = QSpinBox()
+        self.spin_header.setRange(1, 10000)
+        self.spin_header.setValue(3)
+        self.spin_header.setPrefix("Header row: ")
+        self.spin_header.valueChanged.connect(self.on_header_changed)
+        options_layout.addWidget(self.spin_header)
 
         # 분석 모드 선택
         self.radio_range = QRadioButton("Range")
@@ -256,7 +266,8 @@ class MainWindow(QMainWindow):
         file_name, _ = QFileDialog.getOpenFileName(self, "Open Excel File", "", "Excel Files (*.xlsx)")
         if file_name:
             try:
-                df = pd.read_excel(file_name, header=2).dropna(axis=1, how='all')
+                df = read_measurements(file_name, header_row=self.spin_header.value())
+                self.file_path = file_name
                 self.df = df
                 # 파일 이름을 label에 표시하고 버튼 텍스트를 변경
                 base_name = os.path.basename(file_name)
@@ -264,12 +275,28 @@ class MainWindow(QMainWindow):
                 self.file_btn.setText("Re-upload")
                 # 업로드된 데이터의 컬럼 목록을 리스트 위젯에 채우기
                 self.list_columns.clear()
-                for col in df.columns:
-                    item = QListWidgetItem(col)
+                for col in df.columns[1:]:
+                    item = QListWidgetItem(str(col))
+                    item.setData(Qt.UserRole, col)
                     self.list_columns.addItem(item)
                 QMessageBox.information(self, "Success", f"File loaded successfully:\n{file_name}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load file:\n{str(e)}")
+
+    def on_header_changed(self):
+        if not hasattr(self, "file_path"):
+            return
+        try:
+            self.df = read_measurements(self.file_path, header_row=self.spin_header.value())
+            self.list_columns.clear()
+            for col in self.df.columns[1:]:
+                item = QListWidgetItem(str(col))
+                item.setData(Qt.UserRole, col)
+                self.list_columns.addItem(item)
+        except Exception as exc:
+            self.df = None
+            self.list_columns.clear()
+            QMessageBox.warning(self, "Invalid header", str(exc))
 
     def on_run_analysis(self):
         if self.df is None:
@@ -282,19 +309,25 @@ class MainWindow(QMainWindow):
         if not selected_items:
             QMessageBox.warning(self, "Warning", "Please select at least one column.")
             return
-        selected_cols = [item.text() for item in selected_items]
+        selected_cols = [item.data(Qt.UserRole) for item in selected_items]
         self.analysis_thread = AnalysisThread(
             df=self.df,
             analysis_mode=analysis_mode,
             num_best=num_best,
             min_ratio=min_ratio,
-            selected_cols=selected_cols
+            selected_cols=selected_cols,
+            numeric_unit=TIME_UNITS[self.combo_time_unit.currentText()]
         )
         self.analysis_thread.progress_changed.connect(self.on_progress_changed)
         self.analysis_thread.result_ready.connect(self.on_analysis_complete)
+        self.analysis_thread.analysis_failed.connect(self.on_analysis_failed)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
         self.analysis_thread.start()
+
+    def on_analysis_failed(self, message):
+        self.progress_bar.setVisible(False)
+        QMessageBox.warning(self, "Analysis failed", message)
 
     def on_progress_changed(self, val):
         self.progress_bar.setValue(val)
@@ -306,9 +339,9 @@ class MainWindow(QMainWindow):
         self.show_result_table(result_df)
         self.combo_columns.clear()
         for col in self.top_results_dict.keys():
-            self.combo_columns.addItem(col)
+            self.combo_columns.addItem(str(col), col)
         if self.combo_columns.count() > 0:
-            self.update_interactive_plot(self.combo_columns.currentText())
+            self.update_interactive_plot(self.combo_columns.currentData())
         self.stacked.setCurrentWidget(self.page_after)
         self.progress_bar.setVisible(False)
 
@@ -316,7 +349,7 @@ class MainWindow(QMainWindow):
         self.table_summary.clear()
         self.table_summary.setRowCount(df.shape[0])
         self.table_summary.setColumnCount(df.shape[1])
-        self.table_summary.setHorizontalHeaderLabels(df.columns.tolist())
+        self.table_summary.setHorizontalHeaderLabels(df.columns.astype(str).tolist())
         self.table_summary.setVerticalHeaderLabels(df.index.astype(str).tolist())
         for r in range(df.shape[0]):
             for c in range(df.shape[1]):
@@ -326,7 +359,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
 
     def on_combo_changed(self):
-        selected_col = self.combo_columns.currentText()
+        selected_col = self.combo_columns.currentData()
         self.update_interactive_plot(selected_col)
 
     def update_interactive_plot(self, col):

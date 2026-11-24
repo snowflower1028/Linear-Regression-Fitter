@@ -3,7 +3,9 @@
 # It includes functions to convert time formats, detect linear regions, and plot the results.
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as clock_time
+from numbers import Real
+import re
 from typing import List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -18,42 +20,123 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 
-def time_to_seconds_from_any(val, base=None) -> float:
+TIME_UNITS = {
+    "Excel days (1 = 24 hours)": "excel_days",
+    "Seconds": "seconds",
+    "Minutes": "minutes",
+    "Hours": "hours",
+}
+_TIME_FACTORS = {"excel_days": 86400.0, "seconds": 1.0,
+                 "minutes": 60.0, "hours": 3600.0}
+
+
+def time_to_seconds_from_any(val, base=None, numeric_unit="excel_days") -> float:
+    """Convert a scalar time; invalid/missing values return NaN.
+
+    Numeric values (including numeric strings) use numeric_unit. The default
+    preserves existing Excel serial-day inputs. Duration strings are MM:SS or
+    HH:MM:SS, with optional fractional seconds and no 24-hour limit.
     """
-    엑셀에서 시간을 자꾸 이상한걸로 바꿔서 다시 바꿔주는 함수.
-    Supports datetime, timedelta, string (HH:MM:SS), float (days), and int (seconds).
-    :param val: The time value to convert.
-    :param base: Optional base time in seconds for relative conversion. (default: None))
-    :return: Time in seconds.
-    """
+    if numeric_unit not in _TIME_FACTORS:
+        raise ValueError(f"Unsupported numeric time unit: {numeric_unit}")
     try:
-        if isinstance(val, (datetime, pd.Timestamp)):
-            seconds = val.hour * 3600 + val.minute * 60 + val.second
+        if val is None or pd.isna(val) or isinstance(val, (bool, np.bool_)):
+            return np.nan
+        if isinstance(val, datetime):
+            seconds = (val.toordinal() * 86400.0 + val.hour * 3600.0
+                       + val.minute * 60.0 + val.second + val.microsecond / 1e6)
         elif isinstance(val, timedelta):
             seconds = val.total_seconds()
-        elif isinstance(val, str):
-            t = datetime.strptime(val, "%H:%M:%S")
-            seconds = t.hour * 3600 + t.minute * 60 + t.second
-        elif isinstance(val, (float, int)):
-            seconds = val * 86400
-        elif hasattr(val, 'hour') and hasattr(val, 'minute'):
-            seconds = val.hour * 3600 + val.minute * 60 + val.second
+        elif isinstance(val, clock_time):
+            seconds = (val.hour * 3600.0 + val.minute * 60.0
+                       + val.second + val.microsecond / 1e6)
+        elif isinstance(val, str) and ":" in val:
+            match = re.fullmatch(r"(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)", val.strip())
+            if not match:
+                return np.nan
+            hours, minutes, sec = match.groups()
+            if float(sec) >= 60 or (hours is not None and int(minutes) >= 60):
+                return np.nan
+            seconds = int(hours or 0) * 3600.0 + int(minutes) * 60.0 + float(sec)
+        elif isinstance(val, (Real, str)):
+            seconds = float(val) * _TIME_FACTORS[numeric_unit]
         else:
             return np.nan
-        return seconds - base if base is not None else seconds
-    except Exception:
+        seconds = seconds - base if base is not None else seconds
+        return float(seconds) if np.isfinite(seconds) else np.nan
+    except (ValueError, TypeError, OverflowError):
         return np.nan
 
 
-def convert_time_column(time_series):
+def convert_time_column(time_series, numeric_unit="excel_days"):
+    """Return elapsed seconds, preserving row positions and validating times.
+
+    Measurement gaps are handled by the regression functions. A missing or
+    invalid timestamp is rejected so it cannot silently change the time scale.
     """
-    Convert a time series column to seconds.
-    처음엔 그냥 바꾸면 되는 줄 알았음.
-    :param time_series: A pandas Series containing time values.
-    :return: A pandas Series with time values converted to seconds.
-    """
-    base_seconds = time_to_seconds_from_any(time_series.iloc[0])
-    return time_series.apply(lambda x: time_to_seconds_from_any(x, base=base_seconds))
+    if len(time_series) == 0:
+        raise ValueError("The time column is empty.")
+    converted = time_series.apply(
+        lambda val: time_to_seconds_from_any(val, numeric_unit=numeric_unit)
+    ).astype(float)
+    invalid = np.flatnonzero(~np.isfinite(converted.to_numpy()))
+    if len(invalid):
+        rows = ", ".join(str(i + 1) for i in invalid[:10])
+        raise ValueError(f"Invalid or missing time at data row(s): {rows}. "
+                         "Use MM:SS, HH:MM:SS, or numbers in the selected unit.")
+    if np.any(np.diff(converted.to_numpy()) < 0):
+        raise ValueError("Time values must be in nondecreasing order.")
+    return converted - converted.iloc[0]
+
+
+def read_measurements(source, header_row=3):
+    """Read an XLSX with a selectable 1-based header row and time in column 1."""
+    if header_row < 1:
+        raise ValueError("Header row must be at least 1.")
+    frame = pd.read_excel(source, header=header_row - 1).dropna(axis=1, how="all")
+    if frame.empty or len(frame.columns) < 2:
+        raise ValueError("Provide a time column and at least one measurement column.")
+    return frame
+
+
+def summarize_results(result_dict, num_best):
+    """Build the shared UI/XLSX summary without converting coefficients to text."""
+    records = {}
+    for name, results in result_dict.items():
+        values = []
+        for region, score, equation, stats in results:
+            values.extend([region, stats["r2"] if stats else np.nan, equation,
+                           stats["slope"] if stats else np.nan,
+                           stats["intercept"] if stats else np.nan])
+        records[name] = values
+    labels = []
+    for i in range(1, num_best + 1):
+        labels.extend([f"Best {i} Region", f"Best {i} R²", f"Best {i} Equation (t_min)",
+                       f"Best {i} Slope (value/min)", f"Best {i} Intercept"])
+    return pd.DataFrame(records, index=labels)
+
+
+def _rank_segment(stats):
+    # On exact R² ties prefer more points, then the earlier interval.
+    return (stats["r2"], stats["end_idx"] - stats["start_idx"] + 1,
+            -stats["start_idx"], -stats["end_idx"])
+
+
+def _format_results(time_seconds, results, top_n):
+    formatted = []
+    for stats in sorted(results, key=_rank_segment, reverse=True)[:top_n]:
+        t0 = timedelta(seconds=float(time_seconds.iloc[stats["start_idx"]]))
+        t1 = timedelta(seconds=float(time_seconds.iloc[stats["end_idx"]]))
+        equation = f"{stats['slope']:.12g} * t_min {stats['intercept']:+.12g}"
+        formatted.append([f"{t0}-{t1}", round(stats["r2"], 4), equation, stats])
+    return formatted + [["N/A", "N/A", "N/A", None] for _ in range(top_n - len(formatted))]
+
+
+def _validate_regression_input(time_seconds, y_values, min_points, top_n):
+    if len(time_seconds) != len(y_values):
+        raise ValueError("Time and measurement columns must have the same length.")
+    if min_points < 2 or top_n < 1:
+        raise ValueError("min_points must be at least 2 and top_n at least 1.")
 
 
 def detect_linear_region(x, y, window=5, slope_threshold=0.05) -> int:
@@ -68,10 +151,10 @@ def detect_linear_region(x, y, window=5, slope_threshold=0.05) -> int:
     :return: The index of the first point where the slope is below the threshold.
     """
     slopes = []
-    for i in range(len(x) - window):
+    for i in range(len(x) - window + 1):
         xi = x[i:i + window].reshape(-1, 1)
         yi = y[i:i + window]
-        if np.any(np.isnan(xi)) or np.any(np.isnan(yi)):
+        if not (np.isfinite(xi).all() and np.isfinite(yi).all()):
             slopes.append(np.nan)
             continue
         model = LinearRegression().fit(xi, yi)
@@ -90,12 +173,13 @@ def analyze_column(time_seconds, y_values, min_points, top_n=3) -> List[dict]:
     :param top_n: Number of top results to return.
     :return: List of top results with their R^2, slope, and intercept.
     """
+    _validate_regression_input(time_seconds, y_values, min_points, top_n)
     results = []
     for i in range(len(time_seconds)):
-        for j in range(i + min_points, len(time_seconds)):
+        for j in range(i + min_points, len(time_seconds) + 1):
             x = time_seconds.iloc[i:j].to_numpy().reshape(-1, 1)
             y = y_values.iloc[i:j]
-            if np.any(np.isnan(x)) or np.any(np.isnan(y)):
+            if not (np.isfinite(x).all() and np.isfinite(y).all()) or np.ptp(x) == 0:
                 continue
             model = LinearRegression().fit(x, y)
             r2 = r2_score(y, model.predict(x))
@@ -109,18 +193,7 @@ def analyze_column(time_seconds, y_values, min_points, top_n=3) -> List[dict]:
                 "end_idx": j - 1
             })
 
-    results = sorted(results, key=lambda x: -x["r2"])[:top_n]
-    top_results = []
-    for res in results:
-        t_start = str(timedelta(seconds=int(time_seconds.iloc[res["start_idx"]])))
-        t_end = str(timedelta(seconds=int(time_seconds.iloc[res["end_idx"]])))
-        slope_expr = f"{int(res['slope'])}x+{int(res['intercept'])}"
-        top_results.append([f"{t_start}-{t_end}", round(res["r2"], 4), slope_expr, res])
-
-    while len(top_results) < top_n:
-        top_results.append(["N/A", "N/A", "N/A", None])
-
-    return top_results
+    return _format_results(time_seconds, results, top_n)
 
 
 def _compute_segment(args):
@@ -146,6 +219,7 @@ def analyze_column_optimized(time_seconds: pd.Series,
     NaN을 제거하고 ThreadPoolExecutor로 병렬화한 슬라이딩 윈도우 분석.
     :return: [["t0-t1", r2, "slopex+intercept", 원본 dict], ...]
     """
+    _validate_regression_input(time_seconds, y_values, min_points, top_n)
     n = len(time_seconds)
     tasks = []
 
@@ -157,7 +231,7 @@ def analyze_column_optimized(time_seconds: pd.Series,
             y_win = y_values.iloc[start:end].values
 
             # NaN 포함된 세그먼트는 건너뛴다
-            if np.isnan(x_win).any() or np.isnan(y_win).any():
+            if not (np.isfinite(x_win).all() and np.isfinite(y_win).all()) or np.ptp(x_win) == 0:
                 continue
 
             tasks.append((x_win, y_win, start, end - 1))
@@ -168,23 +242,8 @@ def analyze_column_optimized(time_seconds: pd.Series,
         for res in executor.map(_compute_segment, tasks):
             results.append(res)
 
-    # 3) r2 기준 상위 top_n 결과 선택
-    top_results = sorted(results, key=lambda x: -x["r2"])[:top_n]
+    return _format_results(time_seconds, results, top_n)
 
-    # 4) 기존 formatter와 동일하게 문자열화
-    formatted = []
-    for res in top_results:
-        t0 = int(time_seconds.iloc[res["start_idx"]])
-        t1 = int(time_seconds.iloc[res["end_idx"]])
-        range_txt = f"{str(timedelta(seconds=t0))}-{str(timedelta(seconds=t1))}"
-        slope_expr = f"{int(res['slope'])}x+{int(res['intercept'])}"
-        formatted.append([range_txt, round(res["r2"], 4), slope_expr, res])
-
-    # 5) 모자란 슬롯은 N/A로 채우기
-    while len(formatted) < top_n:
-        formatted.append(["N/A", "N/A", "N/A", None])
-
-    return formatted
 
 def calculate_r2(x, y):
     model = LinearRegression().fit(x, y)
@@ -201,68 +260,51 @@ def analyze_column_prefix(time_seconds: pd.Series,
                           y_values: pd.Series,
                           min_points: int,
                           top_n: int = 3):
-    # 1) 누적합 계산 (numpy array가 더 빠릅니다)
-    x = time_seconds.to_numpy()
-    y = y_values.to_numpy()
-    Sx  = np.cumsum(x)
-    Sy  = np.cumsum(y)
-    Sxx = np.cumsum(x * x)
-    Syy = np.cumsum(y * y)
-    Sxy = np.cumsum(x * y)
+    """Rank contiguous finite windows, preserving original row indices.
 
-    def window_stats(i, j):
-        """i..j 구간에 대한 회귀계수와 R² 계산 (O(1))."""
-        L = j - i + 1
-        sum_x  = Sx[j]  - (Sx[i-1]  if i>0 else 0)
-        sum_y  = Sy[j]  - (Sy[i-1]  if i>0 else 0)
-        sum_xx = Sxx[j] - (Sxx[i-1] if i>0 else 0)
-        sum_yy = Syy[j] - (Syy[i-1] if i>0 else 0)
-        sum_xy = Sxy[j] - (Sxy[i-1] if i>0 else 0)
-
-        denom = L*sum_xx - sum_x*sum_x
-        if denom == 0:
-            return None  # 직선이 불가능한 경우
-        m = (L*sum_xy - sum_x*sum_y) / denom
-        b = (sum_y - m*sum_x) / L
-
-        # R² 계산
-        num = (L*sum_xy - sum_x*sum_y)**2
-        den = denom * (L*sum_yy - sum_y*sum_y)
-        r2 = num/den if den>0 else 0
-
-        return {"r2": r2, "slope": m*60, "intercept": b,
-                "start_idx": i, "end_idx": j}
-
-    # 2) 모든 구간에 대해 O(n²) 반복
-    #    top_n 유지 위해 min-heap 사용 (크기 top_n)
+    Invalid pairs never enter prefix sums. A separate count rejects any window
+    containing a gap, so valid windows after that gap remain usable.
+    """
+    _validate_regression_input(time_seconds, y_values, min_points, top_n)
+    x = pd.to_numeric(time_seconds, errors="coerce").to_numpy(dtype=float)
+    y = pd.to_numeric(y_values, errors="coerce").to_numpy(dtype=float)
+    valid = np.isfinite(x) & np.isfinite(y)
+    if not valid.any():
+        return _format_results(time_seconds, [], top_n)
+    x_origin, y_origin = x[valid][0], y[valid][0]
+    x_safe = np.where(valid, x - x_origin, 0.0)
+    y_safe = np.where(valid, y - y_origin, 0.0)
+    def prefix(values):
+        return np.concatenate(([0.0], np.cumsum(values)))
+    sx, sy = prefix(x_safe), prefix(y_safe)
+    sxx, syy = prefix(x_safe * x_safe), prefix(y_safe * y_safe)
+    sxy, bad = prefix(x_safe * y_safe), prefix(~valid)
     heap = []
-    n = len(x)
-    for i in range(n):
-        # j 최소 i+min_points-1 부터 시작
-        for j in range(i + min_points - 1, n):
-            stats = window_stats(i, j)
-            if not stats: 
+    for i in range(len(x)):
+        for j in range(i + min_points, len(x) + 1):
+            if bad[j] != bad[i]:
                 continue
-            # heap 에 (r2, stats)로 pushpop
+            length = j - i
+            sum_x, sum_y = sx[j] - sx[i], sy[j] - sy[i]
+            denom = length * (sxx[j] - sxx[i]) - sum_x * sum_x
+            if denom <= 0:
+                continue
+            cross = length * (sxy[j] - sxy[i]) - sum_x * sum_y
+            y_var = length * (syy[j] - syy[i]) - sum_y * sum_y
+            slope = cross / denom
+            intercept = y_origin + (sum_y - slope * sum_x) / length - slope * x_origin
+            score = float(np.clip(cross * cross / (denom * y_var), 0.0, 1.0)) if y_var > 0 else 1.0
+            stats = {"r2": score, "slope": slope * 60.0, "intercept": intercept,
+                     "start_idx": i, "end_idx": j - 1}
+            if not np.isfinite([score, slope, intercept]).all():
+                continue
+            # start/end make the key unique; a dict is never compared on ties.
+            entry = (*_rank_segment(stats), stats)
             if len(heap) < top_n:
-                heapq.heappush(heap, (stats["r2"], stats))
+                heapq.heappush(heap, entry)
             else:
-                heapq.heappushpop(heap, (stats["r2"], stats))
-
-    # 3) 힙에서 상위 N개 뽑아서 정렬
-    top = sorted(heap, key=lambda x: -x[0])
-    formatted = []
-    for r2, res in top:
-        t0 = str(timedelta(seconds=int(x[res["start_idx"]])))
-        t1 = str(timedelta(seconds=int(x[res["end_idx"]])))
-        formatted.append([f"{t0}-{t1}", round(r2,4),
-                          f"{int(res['slope'])}x+{int(res['intercept'])}", res])
-
-    # 부족분은 N/A로 채움
-    while len(formatted) < top_n:
-        formatted.append(["N/A","N/A","N/A", None])
-
-    return formatted
+                heapq.heappushpop(heap, entry)
+    return _format_results(time_seconds, [entry[-1] for entry in heap], top_n)
 
 
 def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_points=10, max_points=15, slope_threshold=0.05) -> Tuple[List[dict], int]:
@@ -276,6 +318,7 @@ def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_p
     :param slope_threshold: Slope threshold for detecting linear regions.
     :return: List of top results with their R^2, slope, and intercept., cutoff index.
     """
+    _validate_regression_input(time_seconds, y_values, min_points, top_n)
     x = time_seconds.reset_index(drop=True)
     y = y_values.reset_index(drop=True)
     cutoff = detect_linear_region(x.to_numpy(), y.to_numpy(), window=5, slope_threshold=slope_threshold)
@@ -290,7 +333,7 @@ def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_p
             end = start + window_size
             x_win = x.iloc[start:end].to_numpy().reshape(-1, 1)
             y_win = y.iloc[start:end]
-            if np.any(np.isnan(x_win)) or np.any(np.isnan(y_win)):
+            if not (np.isfinite(x_win).all() and np.isfinite(y_win).all()) or np.ptp(x_win) == 0:
                 continue
             model = LinearRegression().fit(x_win, y_win)
             r2 = r2_score(y_win, model.predict(x_win))
@@ -304,18 +347,7 @@ def analyze_column_with_saturation_cutoff(time_seconds, y_values, top_n=3, min_p
                 "end_idx": end - 1
             })
 
-    results = sorted(results, key=lambda r: -r["r2"])[:top_n]
-    top_results = []
-    for res in results:
-        t_start = str(timedelta(seconds=int(x.iloc[res["start_idx"]])))
-        t_end = str(timedelta(seconds=int(x.iloc[res["end_idx"]])))
-        slope_expr = f"{int(res['slope'])}x+{int(res['intercept'])}"
-        top_results.append([f"{t_start}-{t_end}", round(res["r2"], 4), slope_expr, res])
-
-    while len(top_results) < top_n:
-        top_results.append(["N/A", "N/A", "N/A", None])
-
-    return top_results, cutoff
+    return _format_results(time_seconds, results, top_n), cutoff
 
 
 def visualize_best_fits(time_seconds, y_values, best_results, label, out_dir="plots", cutoff_idx=None, num_best=3):
@@ -403,11 +435,10 @@ if __name__ == "__main__":
     print(f"Using file: {uploaded_file}")
 
     # 2) 데이터 로드
-    df = pd.read_excel(uploaded_file, header=2).dropna(axis=1, how='all')
+    df = read_measurements(uploaded_file, header_row=3)
     time_column = df.iloc[:, 0]
     time_seconds = convert_time_column(time_column)
-    start_col_idx = df.columns.get_loc("A1")
-    data_columns = df.columns[start_col_idx:]
+    data_columns = df.columns[1:]
 
     # 3) 파라미터 설정
     min_points = 10
