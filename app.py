@@ -1,149 +1,109 @@
-# app.py
+import hashlib
 import os
 import zipfile
 from io import BytesIO
 from datetime import datetime
-import streamlit as st
+
+import numpy as np
 import pandas as pd
+import streamlit as st
 
 from analyzer import (
-    convert_time_column,
-    analyze_column_prefix,
-    analyze_column_with_saturation_cutoff,
-    visualize_best_fits
+    TIME_UNITS, read_measurements, convert_time_column, summarize_results,
+    analyze_column_prefix, analyze_column_with_saturation_cutoff,
+    visualize_best_fits,
 )
 from streamlit_ui import run_carousel_ui
 
 st.set_page_config(page_title="Linear Fit Analyzer", layout="wide")
 st.title("📈 Linear Regression Analyzer with Saturation Detection")
-st.markdown(
-    """
-    This app analyzes time series data to find linear regions and visualize the results.
-    
-    `version 1.3.0 (2025-04-17, Minsoo Lee, Seoul National University, College of Pharmacy, WLab(Prof. Wooin Lee))`
+st.caption("Version 1.3.1 · Minsoo Lee · Seoul National University College of Pharmacy")
+st.write("Find linear intervals in time-series measurements and export the fitted coefficients.")
 
-    - Upload an Excel file with time series data.    
-    """
-)
+if "analysis_done" not in st.session_state:
+    st.session_state.analysis_done = False
 
-# Initialize session state variables
-for key in ["analysis_done", "result_df", "plot_paths", "img_idx", "df", "time_seconds", "top_results_dict"]:
-    if key not in st.session_state:
-        st.session_state[key] = None if key != "analysis_done" else False
+uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"])
+header_row = st.number_input("Header row", min_value=1, value=3, step=1,
+                             help="1 means the first spreadsheet row. The first column contains time.")
+unit_label = st.selectbox("Numeric time unit", list(TIME_UNITS),
+                         help="Applies to numbers only. Text durations use MM:SS or HH:MM:SS.")
+st.caption("Text 1:30 means 1 minute 30 seconds. Slopes are reported per minute; plot time is in seconds.")
 
-uploaded_file = st.file_uploader("📂 Upload Excel File (.xlsx)", type=["xlsx"])
-
-if uploaded_file:
+if uploaded_file is None:
+    st.session_state.analysis_done = False
+else:
     try:
-        df = pd.read_excel(uploaded_file, header=2).dropna(axis=1, how='all')
-        time_column = df.iloc[:, 0]
-        time_seconds = convert_time_column(time_column)
-        start_col_idx = df.columns.get_loc("A1")
-        data_columns = df.columns[start_col_idx:]
-        total_columns = len(data_columns)
-
-        st.session_state["df"] = df
-        st.session_state["time_seconds"] = time_seconds
-
-        # 파일 인식 성공시 다음으로 넘어감. 실패시 Exception으로 넘어감 당연함.
-        st.success(f"✅ File loaded. Found {total_columns} data columns for analysis.")
-
+        df = read_measurements(uploaded_file, header_row=int(header_row))
+        time_seconds = convert_time_column(df.iloc[:, 0], numeric_unit=TIME_UNITS[unit_label])
+        data_columns = list(df.columns[1:])
+        st.success(f"Loaded {len(df)} timepoints and {len(data_columns)} measurement columns.")
         analysis_mode = st.radio("Select Analysis Type", ["range", "saturation"])
-        num_best = st.slider("Number of Best Fits to Display", min_value=1, max_value=5, value=3)
-        selected_columns = st.multiselect(
-            "🔢 Select columns to analyze",
-            options=list(data_columns),
-            default=list(data_columns)
-        )
-        min_segment_ratio = st.slider("📏 Minimum segment length (% of total points)", min_value=5, max_value=100, value=30, step=1)
+        num_best = st.slider("Number of Best Fits to Display", 1, 5, 3)
+        selected_columns = st.multiselect("Columns to analyze", data_columns, default=data_columns)
+        min_ratio = st.slider("Minimum segment length (% of total points)", 5, 100, 30)
+        signature = (hashlib.sha256(uploaded_file.getvalue()).hexdigest(), int(header_row),
+                     unit_label, analysis_mode, num_best, tuple(selected_columns), min_ratio)
+        if st.session_state.get("result_signature") != signature:
+            st.session_state.analysis_done = False
 
-        # Push the button to start analysis
-        # if로 안 해놨더니 그냥 막 돌아가버림.
-        if st.button("🚀 Run Analysis"):
-            result_dict = {}
-            plot_paths = []
-            top_results_dict = {}
-            progress_bar = st.progress(0)
+        if st.button("Run Analysis"):
+            if not selected_columns:
+                st.warning("Select at least one measurement column.")
+            else:
+                top_results_dict, results, plot_paths = {}, {}, []
+                progress = st.progress(0)
+                min_points = max(2, int(len(time_seconds) * min_ratio / 100))
+                for i, col in enumerate(selected_columns):
+                    y_values = pd.to_numeric(df[col], errors="coerce")
+                    missing = int((~np.isfinite(y_values.to_numpy(dtype=float))).sum())
+                    if missing:
+                        st.warning(f"{col}: {missing} missing/non-finite measurements. "
+                                   "Intervals containing them are excluded; later valid intervals are still searched.")
+                    if analysis_mode == "range":
+                        top_results = analyze_column_prefix(time_seconds, y_values, min_points, top_n=num_best)
+                        cutoff_idx = None
+                    else:
+                        top_results, cutoff_idx = analyze_column_with_saturation_cutoff(
+                            time_seconds, y_values, top_n=num_best, min_points=min_points, max_points=None)
+                    if top_results[0][3] is not None:
+                        visualize_best_fits(time_seconds, y_values, top_results, label=str(col),
+                                            num_best=num_best, cutoff_idx=cutoff_idx)
+                        plot_paths.append(os.path.join("plots", f"{col}_best{num_best}_fits.png"))
+                    else:
+                        st.warning(f"{col}: no valid interval meets the selected minimum length.")
+                    results[col] = top_results
+                    top_results_dict[col] = (top_results, cutoff_idx)
+                    progress.progress((i + 1) / len(selected_columns))
+                st.session_state.update(
+                    result_df=summarize_results(results, num_best),
+                    top_results_dict=top_results_dict, plot_paths=plot_paths,
+                    df=df, time_seconds=time_seconds, num_best=num_best,
+                    result_signature=signature, analysis_done=True,
+                )
+                st.success("Analysis complete.")
+    except (ValueError, TypeError, KeyError) as exc:
+        st.session_state.analysis_done = False
+        st.error(str(exc))
 
-            for i, col in enumerate(selected_columns):
-                y_values = pd.to_numeric(df[col], errors='coerce')
-                total_points = len(time_seconds)
-                min_points = max(2, int(total_points * (min_segment_ratio / 100)))
-
-                if analysis_mode == "range":
-                    top_results = analyze_column_prefix(time_seconds, y_values, min_points, top_n=num_best)
-                    cutoff_idx = None
-                else:
-                    top_results, cutoff_idx = analyze_column_with_saturation_cutoff(
-                        time_seconds, y_values,
-                        top_n=num_best,
-                        min_points=min_points,
-                        max_points=None
-                    )
-
-                if top_results[0][3]:
-                    visualize_best_fits(time_seconds, y_values, top_results, label=col, num_best=num_best, cutoff_idx=cutoff_idx)
-                    plot_path = os.path.join("plots", f"{col}_best{num_best}_fits.png")
-                    plot_paths.append(plot_path)
-
-                row = []
-                for result in top_results:
-                    row += [result[0], result[1], result[2]]
-                result_dict[col] = row
-
-                top_results_dict[col] = (top_results, cutoff_idx)
-                progress_bar.progress((i + 1) / len(selected_columns))
-
-            row_labels = []
-            for i in range(1, num_best + 1):
-                row_labels += [f"Best {i} 시간", f"Best {i} r²", f"Best {i} slope"]
-
-            result_df = pd.DataFrame(result_dict, index=row_labels)
-            clean_result_df = result_df.astype(str)
-
-            st.session_state["result_df"] = clean_result_df
-            st.session_state["plot_paths"] = plot_paths
-            st.session_state["top_results_dict"] = top_results_dict
-            st.session_state["analysis_done"] = True
-            st.success("✅ Analysis complete.")
-
-    except Exception as e:
-        st.error(f"❌ Error processing file: {e}")
-
-# 결과 인터페이스 버튼 눌렀을 때 초기화 되는 것을 방지하기 위해 세션 상태확인
-if st.session_state["analysis_done"]:
-    result_df = st.session_state["result_df"]
-    plot_paths = st.session_state["plot_paths"]
-    df = st.session_state["df"]
-    time_seconds = st.session_state["time_seconds"]
-    top_results_dict = st.session_state["top_results_dict"]
-
-    st.markdown("### 📋 Summary of Best Fits")
-    st.dataframe(result_df, use_container_width=True)
-
+if st.session_state.analysis_done:
+    result_df = st.session_state.result_df
+    st.subheader("Summary of Best Fits")
+    st.dataframe(result_df.astype(str), use_container_width=True)
+    st.caption("Equation uses t_min (elapsed minutes). Numeric slope and intercept rows retain full precision in Excel.")
     buffer = BytesIO()
     result_df.to_excel(buffer, index=True)
-    st.download_button(
-        label="📥 Download Excel Summary",
-        data=buffer.getvalue(),
-        file_name=f"best_fit_summary_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    if plot_paths:
+    st.download_button("Download Excel Summary", buffer.getvalue(),
+                       file_name=f"best_fit_summary_{datetime.now():%Y-%m-%d_%H-%M-%S}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if st.session_state.plot_paths:
         zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zf:
-            for path in plot_paths:
+        with zipfile.ZipFile(zip_buffer, "w") as archive:
+            for path in st.session_state.plot_paths:
                 if os.path.exists(path):
-                    zf.write(path, arcname=os.path.basename(path))
-
-        st.download_button(
-            label="📦 Download All Plots as ZIP",
-            data=zip_buffer.getvalue(),
-            file_name=f"plots_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.zip",
-            mime="application/zip"
-        )
-
-    # Plotly를 사용한 interactive chart를 표시. stream_ui.py에서 실행됨
-    st.markdown("### 🖼 Interactive Plot Viewer")
-    run_carousel_ui(df, time_seconds, top_results_dict, num_best=num_best)
+                    archive.write(path, arcname=os.path.basename(path))
+        st.download_button("Download All Plots as ZIP", zip_buffer.getvalue(),
+                           file_name=f"plots_{datetime.now():%Y-%m-%d_%H-%M-%S}.zip", mime="application/zip")
+    st.subheader("Interactive Plot Viewer")
+    run_carousel_ui(st.session_state.df, st.session_state.time_seconds,
+                    st.session_state.top_results_dict, num_best=st.session_state.num_best)
